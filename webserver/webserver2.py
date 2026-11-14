@@ -1,0 +1,223 @@
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import urllib.parse
+from pymongo import MongoClient
+import matrix
+
+PORT = 8770
+
+class StockDataHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        target_code = query_params.get("code", ["005930"])[0]
+        selected_table = query_params.get("table", ["ALL"])[0]
+        view_mode = query_params.get("view", ["default"])[0]
+        freq_mode = query_params.get("freq", ["annual"])[0]  # annual / quarterly / consensus
+
+        client = MongoClient("mongodb://127.0.0.1:27017/")
+        db = client["fnguide_db"]
+        collection = db["stock_tables"]
+        price_collection = db["CURRENT-PRICE"]
+
+        all_companies = list(collection.find({}, {"_id": 1, "code": 1, "name": 1}))
+
+        # ----------------------------------------------------------------------
+        # 1. PER/ROE/배당수익률/총주주환원수익률 전체 기업 지표 분석 뷰
+        # ----------------------------------------------------------------------
+        if view_mode == "matrix":
+            annual_btn_cls = "btn-primary font-weight-bold" if freq_mode == "annual" else "btn-outline-primary font-weight-bold"
+            quarterly_btn_cls = "btn-primary font-weight-bold" if freq_mode == "quarterly" else "btn-outline-primary font-weight-bold"
+            consensus_btn_cls = "btn-warning text-dark font-weight-bold shadow-sm" if freq_mode == "consensus" else "btn-custom-consensus font-weight-bold"
+
+            body_content = f"""
+            <div class="card mb-4 shadow-sm">
+                <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                    <span style="font-size: 1.25rem; font-weight: bold;">📈 전체 기업 재무 지표 비교 및 정렬 대시보드</span>
+                    
+                    <div class="btn-group" role="group">
+                        <a href="/?view=matrix&freq=annual" class="btn btn-sm {annual_btn_cls}">
+                            📅 확정 연도별
+                        </a>
+                        <a href="/?view=matrix&freq=quarterly" class="btn btn-sm {quarterly_btn_cls}">
+                            📊 확정 분기별
+                        </a>
+                        <a href="/?view=matrix&freq=consensus" class="btn btn-sm {consensus_btn_cls}">
+                            🔮 컨센서스 (추정치)
+                        </a>
+                    </div>
+                </div>
+                <div class="card-body">
+                    {matrix.generate_indicator_matrix_html(freq=freq_mode)}
+                </div>
+            </div>
+            """
+        # ----------------------------------------------------------------------
+        # 2. 개별 기업 Raw 표 보기 뷰
+        # ----------------------------------------------------------------------
+        else:
+            doc = collection.find_one({"_id": target_code})
+            price_doc = price_collection.find_one({"$or": [{"code": target_code}, {"기업코드": target_code}, {"_id": target_code}]})
+
+            if not doc and not price_doc:
+                body_content = f"<div class='alert alert-danger'>[{target_code}] 종목 데이터를 찾을 수 없습니다.</div>"
+            else:
+                company_name = doc.get("name", "알 수 없음") if doc else (price_doc.get("name", "알 수 없음") if price_doc else target_code)
+                tables = doc.get("tables", {}) if doc else {}
+                html_parts = []
+                
+                def append_card(title, html_code):
+                    if html_code:
+                        html_parts.append(f"""
+                        <div class="card mb-4 shadow-sm">
+                            <div class="card-header font-weight-bold bg-light">{title}</div>
+                            <div class="card-body">{html_code}</div>
+                        </div>
+                        """)
+
+                # 📌 [수정] PRICE 또는 ALL 선택 시 CURRENT-PRICE와 투자의견/목표주가 컨센서스를 함께 구성
+                if selected_table in ["ALL", "PRICE"]:
+                    price_combined_html = ""
+                    
+                    if price_doc:
+                        price_combined_html += "<h6 class='font-weight-bold text-primary mb-2'>💵 현재가 상세 정보</h6>"
+                        price_combined_html += "<table class='table table-bordered mb-3'><tbody>"
+                        for k, v in price_doc.items():
+                            price_combined_html += f"<tr><th style='width: 30%; background-color: #f1f3f5;'>{k}</th><td>{v}</td></tr>"
+                        price_combined_html += "</tbody></table>"
+                    
+                    # 🎯 컨센서스(목표주가) HTML 결합
+                    consensus_html = tables.get("consensus", {}).get("target_price")
+                    if consensus_html:
+                        price_combined_html += "<h6 class='font-weight-bold text-success mt-4 mb-2'>🎯 투자의견 및 목표주가 컨센서스</h6>"
+                        price_combined_html += consensus_html
+                    elif selected_table == "PRICE" and not price_doc:
+                        price_combined_html = "<div class='text-muted'>저장된 현재가 및 컨센서스 정보가 없습니다.</div>"
+
+                    if price_combined_html:
+                        append_card(f"[{company_name}] 현재가 및 목표주가 컨센서스 정보", price_combined_html)
+
+                if doc:
+                    if selected_table in ["ALL", "SNAPSHOT"]:
+                        append_card(f"[{company_name}] Snapshot (연간)", tables.get("snapshot", {}).get("annual"))
+                        append_card(f"[{company_name}] Snapshot (분기)", tables.get("snapshot", {}).get("quarterly"))
+                    if selected_table in ["ALL", "INCOME"]:
+                        append_card(f"[{company_name}] 포괄손익계산서 (연간)", tables.get("포괄손익계산서", {}).get("annual"))
+                        append_card(f"[{company_name}] 포괄손익계산서 (분기)", tables.get("포괄손익계산서", {}).get("quarterly"))
+                    if selected_table in ["ALL", "BALANCE"]:
+                        append_card(f"[{company_name}] 재무상태표 (연간)", tables.get("재무상태표", {}).get("annual"))
+                        append_card(f"[{company_name}] 재무상태표 (분기)", tables.get("재무상태표", {}).get("quarterly"))
+                    if selected_table in ["ALL", "CASH"]:
+                        append_card(f"[{company_name}] 현금흐름표 (연간)", tables.get("현금흐름표", {}).get("annual"))
+                        append_card(f"[{company_name}] 현금흐름표 (분기)", tables.get("현금흐름표", {}).get("quarterly"))
+
+                body_content = "".join(html_parts)
+
+        nav_raw_active = "btn-secondary active" if view_mode != "matrix" else "btn-outline-secondary"
+        nav_matrix_active = "btn-success active" if view_mode == "matrix" else "btn-outline-success"
+
+        full_page_html = f"""
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+            <meta charset="UTF-8">
+            <title>FnGuide 재무 데이터 대시보드</title>
+            <!-- Bootstrap CSS -->
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+            <!-- DataTables CSS -->
+            <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap4.min.css">
+            <style>
+                body {{ padding: 20px; background-color: #f8f9fa; }}
+                .top-bar {{ background: #ffffff; padding: 15px 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); margin-bottom: 20px; }}
+                .matrix-table {{ width: 100%; border-collapse: collapse; margin-top: 10px; background: white; }}
+                .matrix-table th {{ background-color: #343a40; color: white; text-align: center; padding: 12px; cursor: pointer; }}
+                .matrix-table td {{ padding: 10px; border: 1px solid #dee2e6; }}
+                .matrix-table tr:nth-child(even) {{ background-color: #f8f9fa; }}
+                .matrix-table tr:hover {{ background-color: #e2e6ea; }}
+                
+                .btn-custom-consensus {{
+                    color: #ffc107 !important;
+                    border-color: #ffc107 !important;
+                    background-color: transparent;
+                }}
+                .btn-custom-consensus:hover {{
+                    color: #212529 !important;
+                    background-color: #ffc107 !important;
+                    border-color: #ffc107 !important;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container-fluid">
+                <div class="top-bar d-flex justify-content-between align-items-center">
+                    <div>
+                        <h4 class="d-inline-block mr-4 font-weight-bold">📊 FnGuide 데이터 센터</h4>
+                        <a href="/?code={target_code}&table=ALL" class="btn {nav_raw_active} font-weight-bold mr-2">
+                            🏠 기업별 Raw 표 보기
+                        </a>
+                        <a href="/?view=matrix&freq=annual" class="btn {nav_matrix_active} font-weight-bold">
+                            📈 전체 기업 지표 분석
+                        </a>
+                    </div>
+                    
+                    <form method="GET" action="/" class="form-inline">
+                        <input type="hidden" name="view" value="{view_mode}">
+                        <input type="hidden" name="freq" value="{freq_mode}">
+                        <select name="code" class="form-control mr-2">
+                            {"".join([f'<option value="{c["code"]}" {"selected" if c["code"]==target_code else ""}>[{c["code"]}] {c.get("name","")}</option>' for c in all_companies])}
+                        </select>
+                        <select name="table" class="form-control mr-2">
+                            <option value="ALL" {"selected" if selected_table=="ALL" else ""}>전체 표</option>
+                            <option value="PRICE" {"selected" if selected_table=="PRICE" else ""}>현재가 및 목표주가 (PRICE)</option>
+                            <option value="SNAPSHOT" {"selected" if selected_table=="SNAPSHOT" else ""}>Snapshot</option>
+                            <option value="INCOME" {"selected" if selected_table=="INCOME" else ""}>손익계산서</option>
+                            <option value="BALANCE" {"selected" if selected_table=="BALANCE" else ""}>재무상태표</option>
+                            <option value="CASH" {"selected" if selected_table=="CASH" else ""}>현금흐름표</option>
+                        </select>
+                        <button type="submit" class="btn btn-primary font-weight-bold">조회</button>
+                    </form>
+                </div>
+
+                {body_content}
+            </div>
+
+            <!-- jQuery, Bootstrap JS, DataTables JS -->
+            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+            <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+            <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap4.min.js"></script>
+            <script>
+                $(document).ready(function() {{
+                    $('.matrix-table').DataTable({{
+                        "language": {{
+                            "search": "검색:",
+                            "lengthMenu": "페이지당 _MENU_ 개 보기",
+                            "info": "전체 _TOTAL_개 중 _START_ ~ _END_번째 표시",
+                            "infoEmpty": "데이터 없음",
+                            "infoFiltered": "(전체 _MAX_개 데이터 중 필터링됨)",
+                            "paginate": {{
+                                "first": "처음",
+                                "last": "마지막",
+                                "next": "다음",
+                                "previous": "이전"
+                            }}
+                        }},
+                        "pageLength": 25,
+                        "order": [[ 0, "asc" ]]
+                    }});
+                }});
+            </script>
+        </body>
+        </html>
+        """
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(full_page_html.encode("utf-8"))
+
+
+if __name__ == "__main__":
+    server = HTTPServer(("0.0.0.0", PORT), StockDataHandler)
+    print(f"🚀 웹서버 구동 완료: http://127.0.0.1:{PORT}")
+    server.serve_forever()

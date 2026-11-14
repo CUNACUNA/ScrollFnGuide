@@ -1,0 +1,1 @@
+python -m src.scroll --input companylist.txt --mongo
