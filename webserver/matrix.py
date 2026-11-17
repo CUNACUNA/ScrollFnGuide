@@ -104,6 +104,10 @@ def generate_indicator_matrix_html(
             debug=False
         )
         
+        # 주식수 감소율 호출
+        _, reduction_pct = 주주환원PER.calculate_treasury_reduction_pct(parsed, mode=freq, debug=True)
+        reduction_str = f"{reduction_pct:+.2f}%" if reduction_pct is not None else "-"
+                
         # --- 주주환원 PER 호출 ---
         sh_per_val, sh_per_date = 주주환원PER.calculate_shareholder_return_per(parsed, current_price=current_price, mode=freq, debug=False)
         sh_per_str = f"{sh_per_val:.2f}" if sh_per_val is not None else "-"
@@ -164,7 +168,8 @@ def generate_indicator_matrix_html(
                 <td style="text-align: right; color: #dc3545; font-weight: bold;">{roe_str}</td>
                 <td style="text-align: right; color: #198754; font-weight: bold;">{div_yield_str}</td>
                 <td style="text-align: right; colo #6f42c1; font-weight: bold;">{q_yield_str}</td>
-                <td style="text-align: right; color: #20c997; font-weight: bold;">{sh_per_str}</td>
+                <td style="text-align: right; color: #20c997; font-weight: bold;">{sh_per_str}</td> #주주환원 PER
+                <td style="text-align: right; color: #d63384; font-weight: bold;">{reduction_str}</td>
                 <td style="text-align: right; color: #20c997; font-weight: bold;">{fcf_per_str}</td>
                 <td style="text-align: right; color: #20c997; font-weight: bold;">{upside_str}</td>
                 <td style="text-align: right; color: #20c997; font-weight: bold;">{rim_upside_pct}</td>
@@ -190,6 +195,7 @@ def generate_indicator_matrix_html(
                     <th style="width: 9%;">배당수익률</th>
                     <th style="width: 11%;">순이익주주환원율</th>
                     <th style="width: 11%;">주주환원PER</th>
+                    <th style="width: 10%;">자사주감소율(4분기)</th>
                     <th style="width: 11%;">버펏주주수익률</th>
                     <th style="width: 11%;">컨센서스</th>
                     <th style="width: 11%;">적정주가-RIM</th>

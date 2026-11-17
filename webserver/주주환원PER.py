@@ -15,6 +15,7 @@ def parse_val(val) -> float:
     except ValueError:
         return 0.0
 
+
 def calculate_shareholder_return_per(parsed: dict, current_price: float = None, mode: str = "annual", debug: bool = False) -> tuple[float | None, str | None]:
     """
     [주주환원 PER 계산 모듈]
@@ -158,3 +159,124 @@ def calculate_shareholder_return_per(parsed: dict, current_price: float = None, 
         print(f"================ [주주환원 PER 디버그 종료] ================\n")
         
     return None, None
+    
+    
+
+def calculate_treasury_reduction_pct(parsed: dict, mode: str = "annual", debug: bool = False) -> tuple[float | None, float | None]:
+    """
+    [과거 4분기/연간 주식수(자사주) 감소율 계산 모듈]
+    - 반환값: (감소한 주식수, 보유수 대비 감소율(%))
+      * 주식수가 줄어들었을 경우(소각 등) 양수(+) %로 표시됩니다.
+    """
+    if not isinstance(parsed, dict):
+        return None, None
+
+    if debug:
+        print(f"\n================ [자사주 감소율 디버그 시작] (모드: {mode}) ================")
+
+    tables = parsed.get("tables", parsed)
+    is_quarterly = (mode == "quarterly")
+    freq_key = "quarterly" if is_quarterly else "annual"
+    
+    snp_data = tables.get("snapshot", {}).get(freq_key, {})
+    if not snp_data:
+        snp_data = parsed.get("snapshot", {}).get(freq_key, {})
+
+    def find_account_dict(data_dict: dict, keywords: list[str]):
+        for acc, vals in data_dict.items():
+            acc_clean = re.sub(r"\s+", "", str(acc))
+            for kw in keywords:
+                if kw in acc_clean:
+                    if isinstance(vals, dict):
+                        return acc, vals
+        return None, {}
+
+    reduced_shares = 0.0
+    base_shares = 0.0
+
+    if is_quarterly:
+        shares_dict = 분기별주식수.get_quarterly_shares(parsed, debug=debug)
+        sorted_q_keys = sorted(shares_dict.keys())
+        
+        if debug:
+            print(f"📌 [분기별 주식수 딕셔너리 키 목록]: {sorted_q_keys}")
+            print(f"📌 [추출된 분기별 주식수 데이터]: {shares_dict}")
+
+        # 전체 분기 데이터가 5개 이상이어야 (최근 + 과거 4분기 전 = 총 5개 시점) 정확히 4분기 전 비교 가능
+        if len(sorted_q_keys) >= 5:
+            # 가장 최근 분기가 마지막에 있으므로, 4분기 전은 뒤에서 5번째(-5), 최근은 마지막(-1)
+            q_prev_key = sorted_q_keys[-5] # 2025/06 (과거 4분기 전)
+            q_latest_key = sorted_q_keys[-1] # 2026/06 (최근 분기)
+            
+            shares_prev = shares_dict[q_prev_key]
+            shares_latest = shares_dict[q_latest_key]
+            
+            # 과거 4분기 전 대비 현재 주식수 감소량
+            reduced_shares = shares_prev - shares_latest
+            base_shares = shares_prev
+            
+            if debug:
+                print(f"  - 비교 대상 과거 4분기 전({q_prev_key}): {shares_prev:,.0f}주")
+                print(f"  - 비교 대상 최근 분기({q_latest_key}): {shares_latest:,.0f}주")
+                print(f"  - 계산된 주식 감소량 (과거 - 최근): {reduced_shares:,.0f}주")
+        elif len(sorted_q_keys) == 4:
+            # 데이터가 딱 4개뿐인 경우 부득이하게 첫 번째(3분기 전)와 마지막을 비교
+            q_prev_key = sorted_q_keys[0]
+            q_latest_key = sorted_q_keys[-1]
+            shares_prev = shares_dict[q_prev_key]
+            shares_latest = shares_dict[q_latest_key]
+            
+            reduced_shares = shares_prev - shares_latest
+            base_shares = shares_prev
+            if debug:
+                print(f"  - (분기 4개 제한) 비교 대상 시작({q_prev_key}): {shares_prev:,.0f}주")
+                print(f"  - (분기 4개 제한) 비교 대상 최근({q_latest_key}): {shares_latest:,.0f}주")
+        else:
+            if debug:
+                print(f"  ⚠️ [분기 부족 경고] 유효한 분기 주식수 데이터가 부족합니다. (현재 개수: {len(sorted_q_keys)})")
+    else:
+        annual_snp = tables.get("snapshot", {}).get("annual", {})
+        shares_acc, shares_annual_vals = find_account_dict(annual_snp, ["발행주식수", "보통주주식수"])
+        
+        if debug:
+            print(f"📌 [연간 발행주식수 계정 검색]: {shares_acc}")
+            print(f"📌 [연간 발행주식수 밸류 맵]: {shares_annual_vals}")
+
+        if shares_annual_vals:
+            valid_years = {}
+            for d, v in shares_annual_vals.items():
+                d_str = str(d).strip()
+                if "(E)" in d_str or "(P)" in d_str:
+                    continue
+                match = re.search(r'(\d{4})', d_str)
+                if match:
+                    y_val = int(match.group(1))
+                    if y_val < 2026:
+                        valid_years[str(y_val)] = (d_str, parse_val(v))
+            
+            sorted_y_keys = sorted(valid_years.keys())
+            if len(sorted_y_keys) >= 2:
+                prev_y_key = sorted_y_keys[-2]
+                latest_y_key = sorted_y_keys[-1]
+                
+                prev_col, shares_prev = valid_years[prev_y_key]
+                latest_col, shares_latest = valid_years[latest_y_key]
+                
+                reduced_shares = shares_prev - shares_latest
+                base_shares = shares_prev
+                
+                if debug:
+                    print(f"  - 비교 연도({prev_col}): {shares_prev:,.0f}주 - 직전연도({latest_col}): {shares_latest:,.0f}주 = 감소량: {reduced_shares:,.0f}주")
+
+    if base_shares > 0 and reduced_shares != 0:
+        reduction_pct = round((reduced_shares / base_shares) * 100, 2)
+        if debug:
+            print(f"  ✅ [최종 계산 성공] 기준 주식수: {base_shares:,.0f}주 | 감소량: {reduced_shares:,.0f}주 | 감소율: {reduction_pct:+.2f}%")
+            print(f"================ [자사주 감소율 디버그 종료] ================\n")
+        return reduced_shares, reduction_pct
+
+    if debug:
+        print(f"  ❌ [계산 스킵] 기준 주식수가 0이거나 감소량이 0입니다. (base_shares: {base_shares}, reduced_shares: {reduced_shares})")
+        print(f"================ [자사주 감소율 디버그 종료] ================\n")
+
+    return 0.0, 0.0
