@@ -1,2 +1,4 @@
 Preferred	삼성전자우	005935	005930
 Normal	삼성전자	005930	
+Normal	희림	037440
+Normal	맥쿼리인프라	088980

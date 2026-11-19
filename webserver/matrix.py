@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
 import re
 from pymongo import MongoClient
-import 주주환원율
-import 배당수익률
-import fscore  # 피오트로스키 F-스코어 모듈
-import gp_a    # GP/A (매출총이익 / 총자산) 모듈
 import bps
 import eps
-import roe
+import fscore  # 피오트로스키 F-스코어 모듈
+import gp_a    # GP/A (매출총이익 / 총자산) 모듈
 import per     # 신규 PER 계산 모듈 임포트
-import 주주환원PER
-import 상승여력
+import roe
 import 버핏주주수익PER
-import 주주환원율
+import 배당수익률
+import 상승여력
 import 적정주가_RIM
+import 주주환원PER
+import 주주환원율
 
 
 def parse_val(val):
@@ -25,6 +24,7 @@ def parse_val(val):
     except ValueError:
         return 0.0
 
+
 def parse_price(val: str | int | float | None) -> float | None:
     if val is None:
         return None
@@ -34,27 +34,31 @@ def parse_price(val: str | int | float | None) -> float | None:
     except ValueError:
         return None
 
+
 def generate_indicator_matrix_html(
     freq="annual",
     db_name="fnguide_db",
     stock_col="stock_tables",
-    price_col="CURRENT-PRICE"
+    price_col="CURRENT-PRICE",
 ) -> str:
     client = MongoClient("mongodb://127.0.0.1:27017/")
-    db = client[db_name]
-    
-    stock_collection = db[stock_col]
-    price_collection = db[price_col]
+    try:
+        db = client[db_name]
+        stock_collection = db[stock_col]
+        price_collection = db[price_col]
 
-    price_docs = list(price_collection.find({}))
-    price_map = {}
-    for p_doc in price_docs:
-        code = p_doc.get("code") or p_doc.get("기업코드")
-        raw_p = p_doc.get("current_price")
-        if code and raw_p:
-            price_map[str(code)] = parse_price(raw_p)
+        price_docs = list(price_collection.find({}))
+        price_map = {}
+        for p_doc in price_docs:
+            code = p_doc.get("code") or p_doc.get("기업코드")
+            raw_p = p_doc.get("current_price")
+            if code and raw_p:
+                price_map[str(code)] = parse_price(raw_p)
 
-    docs = list(stock_collection.find({}))
+        docs = list(stock_collection.find({}))
+    finally:
+        client.close()
+
     if not docs:
         return "<div class='alert alert-warning'>stock_tables DB에 저장된 종목 데이터가 없습니다.</div>"
 
@@ -77,66 +81,64 @@ def generate_indicator_matrix_html(
 
         current_price = price_map.get(code)
 
-        # 실제 저장된 'tables' 키 참조
-        tables = doc.get("tables", {})
-        
-        snp_data = tables.get("snapshot", {}).get(freq_key, {})
-        fin_income = tables.get("포괄손익계산서", {}).get(freq_key, {})
-        fin_balance = tables.get("재무상태표", {}).get(freq_key, {})
-
-
         # --- [1] EPS 호출 (eps.py API 연동 - 연간 vs 분기 TTM) ---
         eps_val, eps_date = eps.calculate_eps(parsed, mode=freq, debug=False)
 
         # --- [2] PER 호출 (per.py API 연동) ---
-        per_val, per_date = per.calculate_per(parsed, current_price=current_price, mode=freq, debug=False)
+        per_val, per_date = per.calculate_per(
+            parsed, current_price=current_price, mode=freq, debug=False
+        )
 
         # --- [3] ROE 호출 (roe.py API 연동 - 연간 확정 vs 분기 TTM) ---
         roe_val, roe_date = roe.calculate_roe(parsed, mode=freq, debug=False)
 
-        # --- [4] 배당수익률 호출 ---[cite: 1]
-        dividend_yield = 배당수익률.calculate_dividend_yield(parsed, current_price=current_price, mode=freq, debug=False)
-        
-        # --- [5] 총주주환원수익률(분기) 호출 ---[cite: 1]
-        q_yield = 주주환원율.calculate_quarterly_shareholder_return_rate(
-            parsed, 
-            current_price=current_price, 
-            debug=False
+        # --- [4] 배당수익률 호출 ---
+        dividend_yield = 배당수익률.calculate_dividend_yield(
+            parsed, current_price=current_price, mode=freq, debug=False
         )
-        
+
+        # --- [5] 총주주환원수익률(분기) 호출 ---
+        q_yield = 주주환원율.calculate_quarterly_shareholder_return_rate(
+            parsed, current_price=current_price, debug=False
+        )
+
         # 주식수 감소율 호출
-        _, reduction_pct = 주주환원PER.calculate_treasury_reduction_pct(parsed, mode=freq, debug=True)
+        _, reduction_pct = 주주환원PER.calculate_treasury_reduction_pct(
+            parsed, mode=freq, debug=False
+        )
         reduction_str = f"{reduction_pct:+.2f}%" if reduction_pct is not None else "-"
-                
+
         # --- 주주환원 PER 호출 ---
-        sh_per_val, sh_per_date = 주주환원PER.calculate_shareholder_return_per(parsed, current_price=current_price, mode=freq, debug=False)
+        sh_per_val, _ = 주주환원PER.calculate_shareholder_return_per(
+            parsed, current_price=current_price, mode=freq, debug=True
+        )
         sh_per_str = f"{sh_per_val:.2f}" if sh_per_val is not None else "-"
 
         # --- 워런 버핏 주주수익 호출 ---
-        oe_val, fcf_per_val, oe_date = 버핏주주수익PER.calculate_owner_earnings(doc, current_price=current_price, mode=freq, debug=False)
-        oe_str = f"{int(oe_val):,}원" if oe_val is not None else "-"
+        _, fcf_per_val, _ = 버핏주주수익PER.calculate_owner_earnings(
+            doc, current_price=current_price, mode=freq, debug=False
+        )
         fcf_per_str = f"{fcf_per_val:.2f}" if fcf_per_val is not None else "-"
 
-
-        # --- 컨센서스 상승여력 호출 (doc 전체를 넘겨서 내부 경로 유연하게 탐색) ---
-        upside_val, upside_date = 상승여력.calculate_target_upside(doc, current_price=current_price, debug=False)
-        upside_str = f"{upside_val:.2f}%" if upside_val is not None else "-"
-        
-        # RIM 적정주가, 상승 여력(%), 기준 ROE를 일괄 추출
-        bps_val, bps_date = bps.calculate_bps(parsed, mode=freq, debug=False)
-        
-        # 이미 구해둔 roe_val과 방금 구한 bps_val을 RIM 모듈에 직접 투입
-        rim_price, rim_upside_pct = 적정주가_RIM.calculate_rim_from_values(
-            bps_val=bps_val, 
-            roe_val=roe_val, 
-            current_price=current_price, 
-            required_return=0.08, 
-            debug=True
+        # --- 컨센서스 상승여력 호출 ---
+        upside_val, _ = 상승여력.calculate_target_upside(
+            doc, current_price=current_price, debug=False
         )
-        
-        rim_upside_pct_str = f"{rim_upside_pct:+.2f}%" if rim_upside_pct is not None else "-"
-        
-        
+        upside_str = f"{upside_val:.2f}%" if upside_val is not None else "-"
+
+        # --- RIM 적정주가 상승 여력 호출 ---
+        bps_val, _ = bps.calculate_bps(parsed, mode=freq, debug=False)
+        _, rim_upside_pct = 적정주가_RIM.calculate_rim_from_values(
+            bps_val=bps_val,
+            roe_val=roe_val,
+            current_price=current_price,
+            required_return=0.08,
+            debug=False,
+        )
+        rim_upside_pct_str = (
+            f"{rim_upside_pct:+.2f}%" if rim_upside_pct is not None else "-"
+        )
+
         # --- [6] GP/A 계산 호출 (매출총이익 / 총자산) ---
         gp_a_val = gp_a.calculate_gp_a_ratio(parsed, mode=freq, debug=False)
 
@@ -153,7 +155,9 @@ def generate_indicator_matrix_html(
         gp_a_str = f"{gp_a_val:.2f}%" if gp_a_val is not None else "0.00%"
         f_score_str = f"{f_score_val} 점" if f_score_val is not None else "-"
 
-        date_badge_cls = "badge badge-info" if "(E)" in target_date or "(P)" in target_date else ""
+        date_badge_cls = (
+            "badge badge-info" if "(E)" in target_date or "(P)" in target_date else ""
+        )
 
         rows_html.append(f"""
             <tr>
@@ -167,12 +171,12 @@ def generate_indicator_matrix_html(
                 <td style="text-align: right; color: #0d6efd; font-weight: bold;">{per_str}</td>
                 <td style="text-align: right; color: #dc3545; font-weight: bold;">{roe_str}</td>
                 <td style="text-align: right; color: #198754; font-weight: bold;">{div_yield_str}</td>
-                <td style="text-align: right; colo #6f42c1; font-weight: bold;">{q_yield_str}</td>
-                <td style="text-align: right; color: #20c997; font-weight: bold;">{sh_per_str}</td> #주주환원 PER
+                <td style="text-align: right; color: #6f42c1; font-weight: bold;">{q_yield_str}</td>
+                <td style="text-align: right; color: #20c997; font-weight: bold;">{sh_per_str}</td>
                 <td style="text-align: right; color: #d63384; font-weight: bold;">{reduction_str}</td>
                 <td style="text-align: right; color: #20c997; font-weight: bold;">{fcf_per_str}</td>
                 <td style="text-align: right; color: #20c997; font-weight: bold;">{upside_str}</td>
-                <td style="text-align: right; color: #20c997; font-weight: bold;">{rim_upside_pct}</td>
+                <td style="text-align: right; color: #20c997; font-weight: bold;">{rim_upside_pct_str}</td>
                 <td style="text-align: right; color: #e65c00; font-weight: bold;">{gp_a_str}</td>
                 <td style="text-align: center; color: #fd7e14; font-weight: bold;">{f_score_str}</td>
             </tr>

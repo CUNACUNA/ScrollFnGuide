@@ -650,7 +650,6 @@ Normal	매드업	0039P0
 Normal	매일유업	267980	
 Normal	매일홀딩스	005990	
 Normal	매커스	093520	
-Normal	맥쿼리인프라	088980	
 Normal	머큐리	100590	
 Normal	멀티캠퍼스	067280	
 Normal	메가스터디	072870	
@@ -710,7 +709,6 @@ Normal	미래산업	025560
 Normal	미래생명자원	218150	
 Normal	미래아이앤지	007120	
 Normal	미래에셋글로벌리츠	396690	
-Normal	맵스리얼티	094800	
 Normal	미래에셋맵스리츠	357250	
 Normal	미래에셋벤처투자	100790	
 Normal	미래에셋생명	085620	

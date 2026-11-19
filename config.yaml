@@ -1,1 +1,3 @@
-companylist_filename: companylist1.txt
+companylist_filename: companylist_all.txt
+workers: 10
+driver_restart_interval: 20

@@ -197,40 +197,39 @@ def calculate_treasury_reduction_pct(parsed: dict, mode: str = "annual", debug: 
     if is_quarterly:
         shares_dict = 분기별주식수.get_quarterly_shares(parsed, debug=debug)
         sorted_q_keys = sorted(shares_dict.keys())
-        
+
         if debug:
             print(f"📌 [분기별 주식수 딕셔너리 키 목록]: {sorted_q_keys}")
             print(f"📌 [추출된 분기별 주식수 데이터]: {shares_dict}")
 
-        # 전체 분기 데이터가 5개 이상이어야 (최근 + 과거 4분기 전 = 총 5개 시점) 정확히 4분기 전 비교 가능
         if len(sorted_q_keys) >= 5:
-            # 가장 최근 분기가 마지막에 있으므로, 4분기 전은 뒤에서 5번째(-5), 최근은 마지막(-1)
-            q_prev_key = sorted_q_keys[-5] # 2025/06 (과거 4분기 전)
-            q_latest_key = sorted_q_keys[-1] # 2026/06 (최근 분기)
-            
+            q_prev_key = sorted_q_keys[-5]   # 1년 전 기준 분기 (예: 2025/06)
+            q_latest_key = sorted_q_keys[-1] # 최근 분기 (예: 2026/06)
+
             shares_prev = shares_dict[q_prev_key]
             shares_latest = shares_dict[q_latest_key]
-            
-            # 과거 4분기 전 대비 현재 주식수 감소량
+
             reduced_shares = shares_prev - shares_latest
             base_shares = shares_prev
-            
+
             if debug:
-                print(f"  - 비교 대상 과거 4분기 전({q_prev_key}): {shares_prev:,.0f}주")
+                print(f"  - 비교 대상 과거 분기({q_prev_key}): {shares_prev:,.0f}주")
                 print(f"  - 비교 대상 최근 분기({q_latest_key}): {shares_latest:,.0f}주")
-                print(f"  - 계산된 주식 감소량 (과거 - 최근): {reduced_shares:,.0f}주")
+                print(f"  - 계산된 주식 감소량 ({q_prev_key} - {q_latest_key}): {reduced_shares:,.0f}주")
         elif len(sorted_q_keys) == 4:
-            # 데이터가 딱 4개뿐인 경우 부득이하게 첫 번째(3분기 전)와 마지막을 비교
             q_prev_key = sorted_q_keys[0]
             q_latest_key = sorted_q_keys[-1]
+
             shares_prev = shares_dict[q_prev_key]
             shares_latest = shares_dict[q_latest_key]
-            
+
             reduced_shares = shares_prev - shares_latest
             base_shares = shares_prev
+
             if debug:
                 print(f"  - (분기 4개 제한) 비교 대상 시작({q_prev_key}): {shares_prev:,.0f}주")
                 print(f"  - (분기 4개 제한) 비교 대상 최근({q_latest_key}): {shares_latest:,.0f}주")
+                print(f"  - 계산된 주식 감소량 ({q_prev_key} - {q_latest_key}): {reduced_shares:,.0f}주")
         else:
             if debug:
                 print(f"  ⚠️ [분기 부족 경고] 유효한 분기 주식수 데이터가 부족합니다. (현재 개수: {len(sorted_q_keys)})")
