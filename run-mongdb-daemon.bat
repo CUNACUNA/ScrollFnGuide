@@ -1,1 +1,1 @@
-"C:\Program Files\MongoDB\Server\9.0\bin\mongod.exe" --dbpath db-data
+"C:\Program Files\MongoDB\Server\9.0\bin\mongod.exe" --dbpath ..\db-data

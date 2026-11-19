@@ -1,0 +1,4 @@
+result = get_ttm_treasury(
+    "4552181bd152118d4e67ccd635119bbc4b81bfa5",
+    "005930"
+)
